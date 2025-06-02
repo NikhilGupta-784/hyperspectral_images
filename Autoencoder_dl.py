@@ -8,35 +8,43 @@ import matplotlib.pyplot as plt
 
 def load_HSI(path):
     data = sio.loadmat(path)['indian_pines_corrected'].astype(np.float32)
-    for i in range(data.shape[2]):
-        band = data[:,:, i]
-        data[:, :, i] = (band - band.mean()) / band.std() #normalized
+    data=(data/9604)*255
     return data
 
-def mask(img, mask_ratio = 0.4):
+def mask(img, mask_ratio = 0.5):
     mask = np.random.rand(*img.shape) > mask_ratio
     return img*mask
 
+class MinMaxNormalize:
+    def __call__(self, tensor):
+        min_val = tensor.min()
+        max_val = tensor.max()
+        return ((tensor - min_val) / (max_val - min_val + 1e-8))
+
 class MaskedBandImageDataset(Dataset):
     def __init__(self, cube, masks_per_band=15):
-        self.data = []
+        self.mask_img = []
+        self.org_image = []
         h, w, b = cube.shape
         for band in range(b):
             band_img = cube[:, :, band]
             for _ in range(masks_per_band):
                 masked = mask(band_img)
-                self.data.append(masked.astype(np.float32))
+                self.mask_img.append(masked.astype(np.float32))
+                self.org_image.append(band_img)
 
         self.transform = T.Compose([
-            T.ToTensor(),  
+            T.ToTensor(),
+            # MinMaxNormalize()
         ])
 
     def __len__(self):
-        return len(self.data)
+        return len(self.mask_img)
 
     def __getitem__(self, idx):
-        masked_img = self.data[idx]
-        return self.transform(masked_img), self.transform(masked_img)  # (input, target)
+        masked_img = self.mask_img[idx]
+        return self.transform(masked_img), self.transform(self.org_image[idx])
+        # return masked_img, self.org_image[idx]# (input, target)
 
 
 cube = load_HSI("Dataset/Indian_pines_corrected.mat")
@@ -45,6 +53,14 @@ print("Dataset size:", len(dataset))  # Should be 3000
 
 from torch.utils.data import DataLoader
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+if __name__ == "__main__":
+    for data in dataloader:
+        ip, tr = data
+        print(f"{ip.shape=}    {tr.shape=}")
+        print(f"{ip.min().item()=}    {tr.min().item()=}")
+        print(f"{ip.max().item()=}    {tr.max().item()=}")
+
 
 
 
@@ -55,7 +71,7 @@ dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
 
 # ===========================
 
-# band_index = 100
+# band_index = 50
 # original = cube[:, :, band_index]
 # masked = mask(original, mask_ratio =0.4)
 #
