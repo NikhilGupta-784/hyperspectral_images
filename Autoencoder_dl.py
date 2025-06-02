@@ -28,7 +28,7 @@ class MaskedBandImageDataset(Dataset):
                 self.data.append(masked.astype(np.float32))
 
         self.transform = T.Compose([
-            T.ToTensor(),  # Converts [H, W] → [1, H, W]
+            T.ToTensor(),  
         ])
 
     def __len__(self):
