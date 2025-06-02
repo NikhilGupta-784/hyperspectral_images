@@ -28,12 +28,15 @@ class Autoencoder(nn.Module):
             nn.ConvTranspose2d(32, 16, 3, stride= 2, padding= 1, output_padding= 0), #37 - 73
             nn.ReLU(),
             nn.ConvTranspose2d( 16, 1, 3, stride= 2, padding= 1, output_padding= 0), #73 - 145
-            nn.Sigmoid()
+            nn.ReLU()
+
         )
 
     def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
+        LV = self.encoder(x)
+        x = self.decoder(LV)
+        x = torch.clamp(x, 0, 255)  # Ensure output stays within [0, 255]
+
         return x
 
 
@@ -42,8 +45,8 @@ def evaluation(y_true, y_pred):
     y_true = y_true.squeeze().detach().cpu().numpy()
     y_pred = y_pred.squeeze().detach().cpu().numpy()
 
-    psnr_val = psnr(y_true, y_pred, data_range= 1.0)
-    ssim_val = ssim(y_true, y_pred, data_range= 1.0)
+    psnr_val = psnr(y_true, y_pred, data_range= 255)
+    ssim_val = ssim(y_true, y_pred, data_range= 255)
     mae_val = mae(y_true.flatten(), y_pred.flatten())
 
     return mae_val, psnr_val, ssim_val
@@ -57,15 +60,17 @@ class SSIM_MSE_Loss(nn.Module):
 
     def forward(self, y_pred, y_true):
         mse_loss = self.mse(y_pred, y_true)
-        ssim_loss = 1 - piq.ssim(y_pred, y_true, data_range=1.0)  # SSIM ∈ [0,1]
+        ssim_loss = 1 - piq.ssim(y_pred, y_true, data_range=255)
+        # print(f"{mse_loss}, {ssim_loss}")# SSIM ∈ [0,1]
         return self.alpha * mse_loss + (1 - self.alpha) * ssim_loss
+        # return mse_loss
 
 
 def train(model, dataloader, device ='cuda', epochs = 20):
     model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr= 1e-3)
-    criterion = SSIM_MSE_Loss(alpha=0.85)
+    criterion = SSIM_MSE_Loss(alpha=0.02)
 
     mae_ls, psnr_ls, ssim_ls = [], [], []
 
@@ -73,20 +78,26 @@ def train(model, dataloader, device ='cuda', epochs = 20):
         model.train()
         total_loss = 0
         mae_e, psnr_e, ssim_e =0, 0, 0
+        loop=tqdm(dataloader,desc=f'Epoch: {epoch+1}/{epochs}')
 
-        for x, y in tqdm(dataloader, desc=f'Epoch: {epoch+1}/{epochs}'):
+        for x, y in loop:
             x, y = x.to(device), y.to(device)
             y_pred = model(x)
             
             # y = torch.clamp(y, 0.0, 1.0)
 
-            print("y_true min/max:", y.min().item(), y.max().item())
-            print("y_pred min/max:", y_pred.min().item(), y_pred.max().item())
+            # print("y_true min/max:", y.min().item(), y.max().item())
+            # print("y_pred min/max:", y_pred.min().item(), y_pred.max().item())
 
             loss = criterion(y_pred, y)
-            optimizer.zero_grad()
+            loop.set_postfix(loss=loss.item())
             loss.backward()
+            # for name, param in model.named_parameters():
+            #     if param.grad is not None:
+            #         print(f"{name} grad norm: {param.grad.norm().item()}")
+
             optimizer.step()
+            optimizer.zero_grad()
             total_loss += loss.item()
 
             for i in range(x.size(0)):
@@ -96,8 +107,9 @@ def train(model, dataloader, device ='cuda', epochs = 20):
                 ssim_e += s
 
 
+
         n = len(dataloader.dataset)
-        print(f"Loss: {total_loss: .4f} | MAE: {mae_e/n: .4f} | PSNR: {psnr_e/n:.2f} | SSIM: {ssim_e/n:.4f} ")
+        print(f"Loss: {total_loss/len(dataloader): .4f} | MAE: {mae_e/n: .4f} | PSNR: {psnr_e/n:.2f} | SSIM: {ssim_e/n:.4f} ")
         mae_ls.append(mae_e/n)
         psnr_ls.append(psnr_e/n)
         ssim_ls.append(ssim_e/n)
@@ -111,7 +123,7 @@ if __name__ == "__main__":
 
     mae_list, psnr_list, ssim_list = train(model, dataloader, device=device, epochs=50)
 
-    torch.save(model.state_dict(), "saved_model_AE\\AE_indian_pines4_ssimloss.pth")
+    torch.save(model.state_dict(), "saved_model_AE\\AE_indian_pines4_norm_ssimloss.pth")
     print("Model saved to AE_indian_pines.pth")
 
     import matplotlib.pyplot as plt
@@ -126,5 +138,5 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig("autoencoder_metrics4_ssimloss.png")
+    plt.savefig("autoencoder_metrics4_norm_ssimloss.png")
     plt.show()
